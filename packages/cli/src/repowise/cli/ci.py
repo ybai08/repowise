@@ -9,8 +9,9 @@ the workflow-command strings come from :mod:`repowise.core.ci.github`.
 
 from __future__ import annotations
 
+import contextlib
 import os
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -95,17 +96,31 @@ def ci_revspec(root: str, revspec: str | None) -> str:
 
 def change_lines(root: str, revspec: str | None) -> tuple[dict[str, set[int]], str]:
     """``({file: new-side lines}, label)`` for *revspec*, else the CI's target branch."""
-    import subprocess
-
     from repowise.core.analysis.changed_lines import changed_lines
 
     revspec = ci_revspec(root, revspec)
-    try:
+    with _reading_change(revspec):
         return changed_lines(root, revspec)
+
+
+def change_set(root: str, revspec: str | None, *, staged: bool = False) -> Any:
+    """Every path *revspec* touches, else the staged changes (a ``ChangeSet``)."""
+    from repowise.core.analysis.changed_lines import change_set as read_change_set
+
+    with _reading_change(revspec or "the staged changes"):
+        return read_change_set(root, revspec, staged=staged)
+
+
+@contextlib.contextmanager
+def _reading_change(what: str) -> Iterator[None]:
+    """Turn a failed diff of *what* into :class:`CannotEvaluateError`."""
+    import subprocess
+
+    try:
+        yield
     except ValueError as exc:
         raise CannotEvaluateError(
-            "diff_failed",
-            f"Could not diff {revspec}: {exc}. {SHALLOW_CLONE_HINT}"
+            "diff_failed", f"Could not diff {what}: {exc}. {SHALLOW_CLONE_HINT}"
         ) from exc
     except (subprocess.SubprocessError, OSError) as exc:
         raise CannotEvaluateError("git_failed", f"Could not run git: {exc}") from exc
